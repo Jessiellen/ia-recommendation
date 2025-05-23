@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 class ProductBase(BaseModel):
     name: str
@@ -13,14 +13,14 @@ class Product(ProductBase):
     user_id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class UserBase(BaseModel):
     username: str
     email: str
 
 class UserCreate(UserBase):
-    pass
+    password: str
 
 class User(UserBase):
     id: int
@@ -28,6 +28,13 @@ class User(UserBase):
 
     class Config:
         orm_mode = True
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
 
 class Recommendation(BaseModel):
     product_id: int
