@@ -1,8 +1,11 @@
 import sys
 import os
 from unittest.mock import patch, MagicMock
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import pytest
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+from typing import Generator, Any
 
 sys.modules['chromadb'] = MagicMock()
 sys.modules['chromadb.api'] = MagicMock()
@@ -14,108 +17,99 @@ try:
 except ImportError:
     pass
 
-import pytest
-from dotenv import load_dotenv
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from typing import Generator, Any
-
-from app.database import Base, get_db
-from app.main import app
-from fastapi.testclient import TestClient
-from app.core.config import settings
-from app.auth.jwks import create_access_token, get_password_hash
-from app.models.user import User
-from app.agents.recommendation_agent import RecommendationAgent
-
-
 def pytest_configure(config):
-    """
-    Hook do pytest para configurar antes de qualquer teste ser executado.
-    Garanti que as variáveis de ambiente necessárias para a classe Settings sejam carregadas.
-    """
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    dotenv_path = os.path.join(project_root, ".env.test")
-
-    if os.path.exists(dotenv_path):
-        load_dotenv(dotenv_path)
-        print(f"\n--- DEBUG: .env.test carregado de: {dotenv_path} ---")
-        print(f"--- DEBUG: DATABASE_URL definido: {os.getenv('DATABASE_URL') is not None} ---")
-        print(f"--- DEBUG: SECRET_KEY definido: {os.getenv('SECRET_KEY') is not None} ---")
-        print(f"--- DEBUG: TESTING definido: {os.getenv('TESTING') == 'True'} ---")
+    """Configuração inicial do pytest"""
+    env_path = os.path.join(os.path.dirname(__file__), "..", ".env.test")
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        print(f"\nVariáveis de teste carregadas de: {env_path}")
     else:
-        print(f"\n--- ERRO CRÍTICO: .env.test NÃO ENCONTRADO em: {dotenv_path} ---")
+        print("\nUsando configurações padrão para testes")
 
-    settings.DATABASE_URL = "sqlite:///:memory:"
-
-TEST_SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-engine = create_engine(TEST_SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+TEST_DATABASE_URL = "sqlite:///:memory:"
+engine = create_engine(
+    TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    echo=False
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 @pytest.fixture(scope="session")
 def setup_test_database():
+    """Configura o banco de dados de teste"""
+    from app.database import Base
     Base.metadata.create_all(bind=engine)
     yield
     Base.metadata.drop_all(bind=engine)
 
 @pytest.fixture
-def db_session(setup_test_database):
+def db_session(setup_test_database) -> Generator[Session, None, None]:
+    """Sessão do banco de dados para testes"""
     connection = engine.connect()
     transaction = connection.begin()
     session = TestingSessionLocal(bind=connection)
-
-    yield session
-
-    session.close()
-    transaction.rollback()
-    connection.close()
+    
+    try:
+        yield session
+    finally:
+        session.close()
+        transaction.rollback()
+        connection.close()
 
 @pytest.fixture
 def client(db_session: Session):
+    """Cliente de teste FastAPI"""
+    from app.main import app
+    from app.database import get_db
+    from fastapi.testclient import TestClient
+    
     def override_get_db():
         try:
             yield db_session
         finally:
-            pass
-
+            db_session.rollback()
+    
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
 
 @pytest.fixture
-def admin_token(db_session: Session):
-    admin_user = User(username="admin", email="admin@example.com", hashed_password=get_password_hash("adminpassword"))
-    db_session.add(admin_user)
+def admin_user(db_session: Session):
+    """Usuário admin para testes"""
+    from app.models.user import User
+    from app.core.security import get_password_hash
+    
+    user = User(
+        username="admin",
+        email="admin@example.com",
+        hashed_password=get_password_hash("adminpassword")
+    )
+    db_session.add(user)
     db_session.commit()
-    db_session.refresh(admin_user)
+    db_session.refresh(user)
+    return user
+
+@pytest.fixture
+def admin_token(admin_user):
+    """Token JWT para o admin"""
+    from app.core.security import create_access_token
     return create_access_token({"sub": admin_user.username})
 
 @pytest.fixture
-def user_token(db_session: Session):
-    regular_user = User(username="alice", email="alice@example.com", hashed_password=get_password_hash("alicepassword"))
-    db_session.add(regular_user)
-    db_session.commit()
-    db_session.refresh(regular_user)
-    return create_access_token({"sub": regular_user.username})
-
-@pytest.fixture
-def mock_recommendation_agent(mocker):
-    mock_chat_ollama_class = mocker.patch('app.agents.recommendation_agent.ChatOllama')
-    mock_ollama_instance = mock_chat_ollama_class.return_value
-
-    default_response_content = """
-Product ID: 101, Name: Smartwatch X2, Reason: Ótimo para monitoramento de saúde e notificações.
-Product ID: 102, Name: Fone Bluetooth Pro, Reason: Qualidade de áudio superior e confortável.
-Product ID: 103, Name: E-reader Lumina, Reason: Ideal para leitura digital com tela confortável.
-"""
-    mock_ollama_instance.invoke.return_value = MagicMock(content=default_response_content)
-
-    mock_agent_instance = mocker.Mock(spec=RecommendationAgent)
-    mock_agent_instance.generate_recommendations.return_value = [
-        {"product_id": 991, "product_name": "Mocked Book", "reason": "Mocked reason for book."},
-        {"product_id": 992, "product_name": "Mocked Headphones", "reason": "Mocked reason for headphones."},
-    ]
-    mocker.patch('app.api.endpoints.recommendations.recommendation_agent_instance', new=mock_agent_instance)
-
-    yield mock_agent_instance
+def mock_recommendation_agent():
+    """Mock do agente de recomendação"""
+    with patch('app.agents.recommendation_agent.ChatOllama') as mock_ollama:
+        mock_instance = mock_ollama.return_value
+        mock_instance.invoke.return_value = MagicMock(content="""
+            Product ID: 101, Name: Smartwatch, Reason: Ótimo para saúde
+            Product ID: 102, Name: Fone, Reason: Qualidade de áudio
+            Product ID: 103, Name: E-reader, Reason: Leitura confortável
+        """)
+        
+        with patch('app.api.endpoints.recommendations.RecommendationAgent') as mock_agent:
+            mock_instance = mock_agent.return_value
+            mock_instance.generate_recommendations.return_value = [
+                {"product_id": 101, "product_name": "Mocked", "reason": "Test"}
+            ]
+            yield mock_instance
