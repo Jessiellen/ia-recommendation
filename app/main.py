@@ -1,8 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.endpoints import recommendations, users, auth 
-from app.core.logging import setup_logging
+from app.core.app_logging import setup_logging 
 from app.database import create_tables
+import sys
+
+__import__('pysqlite3')
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
 app = FastAPI(title="IA Recommendation System")
 

@@ -13,21 +13,20 @@ else:
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    pool_pre_ping=True,  # Verifica  antes de usar
-    echo=settings.DEBUG  # Mostra SQL no log em modo debug
+    pool_pre_ping=True,  
+    echo=settings.DB_ECHO_LOGS 
 )
 
 SessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
     bind=engine,
-    expire_on_commit=False  
+    expire_on_commit=False
 )
 
 Base = declarative_base()
 
 def get_db():
-  
     db = SessionLocal()
     try:
         yield db
@@ -41,7 +40,6 @@ def drop_tables():
     Base.metadata.drop_all(bind=engine)
 
 def get_test_db():
-
     db = SessionLocal()
     transaction = db.begin()
     try:
