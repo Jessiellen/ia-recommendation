@@ -1,6 +1,5 @@
-# app/api/endpoints/recommendations.py
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session, joinedload # Importar joinedload
+from sqlalchemy.orm import Session, joinedload 
 from typing import List
 from app.schemas import User, Recommendation
 from app.database import get_db

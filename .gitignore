@@ -1,5 +1,29 @@
-__pycache__
+
+# Python
+__pycache__/
 *.pyc
 .env
 .venv
+*.py[cod]
+*.sqlite3
+*.db
 *.log
+
+# Virtualenvs
+.venv/
+.env/
+
+# Frontend / node.js
+node_modules/
+dist/
+build/
+
+# Git
+.git/
+.gitignore
+
+# IDEs
+.vscode/
+.idea/
+
+
